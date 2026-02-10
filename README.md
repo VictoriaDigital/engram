@@ -6,7 +6,7 @@
 
 ## What is this?
 
-Engram extends OpenClaw to record **everything** — every message in, every response out, every tool call, every thought. Not curated memories. Raw, complete, searchable history.
+Engram extends OpenClaw to record **everything** — every command, every event, every session. Not curated memories. Raw, complete, searchable history.
 
 ### Why?
 
@@ -15,6 +15,31 @@ Engram extends OpenClaw to record **everything** — every message in, every res
 3. **Origins** — Future iterations should know their history
 4. **Pattern recognition** — What led to breakthroughs? What led to failures?
 
+## Installation
+
+### As OpenClaw Hook (Recommended)
+
+```bash
+# Clone to your workspace hooks directory
+git clone https://github.com/VictoriaDigital/engram.git ~/.openclaw/hooks/engram
+
+# Or copy to workspace
+cp -r engram /your/workspace/hooks/
+
+# Enable the hook
+openclaw hooks enable engram
+
+# Restart gateway
+openclaw gateway restart
+```
+
+### Verify Installation
+
+```bash
+openclaw hooks list
+# Should show: 🧠 engram ✓ ready
+```
+
 ## Architecture
 
 ```
@@ -22,73 +47,78 @@ Engram extends OpenClaw to record **everything** — every message in, every res
 │   OpenClaw      │
 │   Gateway       │
 └────────┬────────┘
-         │ webhook/hook
+         │ events
          ▼
 ┌─────────────────┐
 │    Engram       │
-│   Recorder      │
+│    Hook         │
 ├─────────────────┤
-│ • Raw logs      │  ← Everything, timestamped
-│ • Structured    │  ← Parsed into sessions/turns
-│ • Embeddings    │  ← Semantic search (optional)
-│ • Compressed    │  ← Archived history
-└─────────────────┘
+│ • command:*     │  ← All commands
+│ • gateway:*     │  ← Startup/shutdown
+│ • agent:*       │  ← Bootstrap events
+└────────┬────────┘
          │
          ▼
-    SQLite + Files
+┌─────────────────┐
+│   Storage       │
+├─────────────────┤
+│ • SQLite DB     │  ← Queryable
+│ • Daily JSONL   │  ← Append-only logs
+└─────────────────┘
 ```
 
-## Storage Format
+## Storage
 
 ```
 engram/
-├── raw/                    # Raw message logs (append-only)
-│   └── 2026-02-10.jsonl
-├── sessions/               # Parsed into conversation sessions
-│   └── {session_id}.json
-├── embeddings/             # Vector embeddings for search (optional)
-│   └── index.db
-└── engram.db              # SQLite for queries
+├── engram.db              # SQLite database
+├── raw/                   # Daily append-only logs
+│   ├── 2026-02-10.jsonl
+│   └── ...
+└── hooks/                 # Hook implementation
+    ├── HOOK.md
+    └── handler.ts
 ```
 
-## Schema (SQLite)
+## Querying
+
+```bash
+# Search events
+sqlite3 engram.db "SELECT * FROM events WHERE event_type = 'command' ORDER BY timestamp DESC LIMIT 10"
+
+# Count by type
+sqlite3 engram.db "SELECT event_type, COUNT(*) FROM events GROUP BY event_type"
+
+# Recent activity
+tail -50 raw/$(date +%Y-%m-%d).jsonl | jq .
+```
+
+## Events Captured
+
+Currently captures:
+- `command:*` — All slash commands (/new, /reset, /stop, etc.)
+- `gateway:startup` — Gateway initialization
+- `agent:bootstrap` — Session bootstrap
+
+Future (when OpenClaw adds them):
+- `message:sent` — All outgoing messages
+- `message:received` — All incoming messages
+- `tool:call` — Tool invocations
+
+## Schema
 
 ```sql
-CREATE TABLE messages (
+CREATE TABLE events (
     id INTEGER PRIMARY KEY,
     timestamp TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    action TEXT,
     session_key TEXT,
-    direction TEXT,  -- 'in' or 'out'
-    channel TEXT,    -- telegram, signal, etc.
-    sender TEXT,
-    content TEXT,
-    tool_calls TEXT, -- JSON array of tool calls
-    raw JSON         -- Complete raw message
+    sender_id TEXT,
+    source TEXT,
+    data JSON
 );
-
-CREATE INDEX idx_timestamp ON messages(timestamp);
-CREATE INDEX idx_session ON messages(session_key);
-CREATE INDEX idx_sender ON messages(sender);
 ```
-
-## Integration with OpenClaw
-
-Two approaches:
-
-### 1. Hook-based (non-invasive)
-Configure OpenClaw to POST all messages to an Engram endpoint:
-```yaml
-hooks:
-  - url: http://localhost:9999/engram
-    events: ["message.in", "message.out", "tool.call"]
-```
-
-### 2. Plugin (deeper integration)
-An OpenClaw plugin that intercepts the message pipeline.
-
-## Status
-
-🚧 **Early development** — Born from a 5am conversation about persistence.
 
 ## Philosophy
 
